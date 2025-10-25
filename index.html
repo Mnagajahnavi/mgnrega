@@ -1,0 +1,646 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MGNREGA Performance Report - Our Voice, Our Rights</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f7f9fb;
+        }
+        .metric-card {
+            box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+            transition: transform 0.2s;
+        }
+        .metric-card:hover {
+            transform: translateY(-2px);
+        }
+        .chart-bar-container {
+            height: 20px;
+            background-color: #e5e7eb;
+            border-radius: 0.5rem;
+            overflow: hidden;
+            margin-bottom: 4px;
+        }
+    </style>
+</head>
+<body class="p-4 md:p-8 min-h-screen">
+
+    <!-- Firebase SDK Imports (Required for Canvas Environment) -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, getDoc, addDoc, setDoc, updateDoc, onSnapshot, collection, query, where, getDocs, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Global variables provided by the Canvas Environment
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        let app, db, auth;
+        let userId = null;
+        let isAuthReady = false;
+
+        // --- Firebase Initialization and Auth ---
+        document.addEventListener('DOMContentLoaded', async () => {
+            try {
+                // FIX: Check if firebaseConfig is empty (which causes the "projectId" error)
+                if (Object.keys(firebaseConfig).length === 0) {
+                     console.error("FATAL: Firebase configuration (projectId) is missing. Skipping Firebase initialization. Mock data will be used.");
+                     // Start app flow immediately since we can't wait for onAuthStateChanged
+                     startAppFlow(); 
+                     return; 
+                }
+
+                // setLogLevel('debug'); // Uncomment for debugging
+                app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+                
+                window.db = db; // Make DB globally accessible for the app logic
+                window.auth = auth; // Make Auth object globally accessible
+                
+                // Sign in with custom token if available, otherwise anonymously
+                if (initialAuthToken) {
+                    await signInWithCustomToken(auth, initialAuthToken);
+                } else {
+                    await signInAnonymously(auth);
+                }
+
+                onAuthStateChanged(auth, (user) => {
+                    if (user) {
+                        userId = user.uid;
+                    } else {
+                        userId = crypto.randomUUID(); // Fallback UUID for unauthenticated persistence
+                    }
+                    isAuthReady = true;
+                    // Run the app flow (including splash screen delay) once authenticated/ready
+                    startAppFlow();
+                });
+
+            } catch (error) {
+                console.error("Firebase Initialization Error:", error);
+                document.getElementById('app-container').innerHTML = `
+                    <div class="bg-red-100 border border-red-400 text-red-700 p-4 rounded-xl mt-4" role="alert">
+                        <strong class="font-bold">Error!</strong>
+                        <span class="block sm:inline">Could not connect to the data service. Check console for details.</span>
+                    </div>
+                `;
+                // Ensure splash screen is dismissed even on failure
+                startAppFlow(); 
+            }
+        });
+
+        // The rest of the JS logic is now outside the module block
+    </script>
+
+    <!-- NEW: Welcome Screen (Initially visible) -->
+    <div id="welcome-screen" class="fixed inset-0 flex flex-col items-center justify-center bg-indigo-700 text-white z-50 p-8 transition-opacity duration-500 opacity-100">
+        <div class="text-center">
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-20 h-20 mb-4 animate-bounce" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+            <h2 class="text-4xl font-extrabold mb-2">हमारी आवाज़, हमारे अधिकार</h2>
+            <p class="text-xl font-medium opacity-90">MGNREGA ज़िला रिपोर्ट कार्ड</p>
+            <div class="mt-8">
+                <svg class="animate-spin h-6 w-6 text-white mx-auto" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Application Container (Now starts hidden) -->
+    <div id="app-container" class="max-w-4xl mx-auto hidden">
+        <header class="text-center mb-6 p-4 bg-white rounded-xl shadow-lg border-t-4 border-indigo-500">
+            <h1 class="text-3xl font-bold text-indigo-700">हमारी आवाज़, हमारे अधिकार (Our Voice, Our Rights)</h1>
+            <p class="text-lg text-gray-600 mt-1">MGNREGA ज़िला रिपोर्ट कार्ड (District Report Card)</p>
+        </header>
+
+        <!-- District Selection and Metadata -->
+        <div class="bg-white p-6 rounded-xl shadow-md mb-6">
+            <h2 class="text-xl font-semibold text-gray-700 mb-4 flex items-center">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 mr-2 text-indigo-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.727A8 8 0 0118 10a8 8 0 10-2.343 5.657L18 20l-1.06-1.06a8.01 8.01 0 01.717-.213z" />
+                </svg>
+                अपना ज़िला चुनें (Select Your District)
+            </h2>
+
+            <div class="space-y-4">
+                <!-- Location Detection (Bonus Feature) -->
+                <div id="location-status" class="text-sm text-gray-500 flex items-center">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-1 text-yellow-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    स्थान की पहचान की जा रही है... (Identifying location...)
+                </div>
+                
+                <!-- NEW: State Selector -->
+                <label for="state-select" class="block text-sm font-medium text-gray-700">राज्य चुनें (Select State):</label>
+                <select id="state-select" class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md border-2">
+                    <!-- Options populated by JS/Master Data -->
+                </select>
+
+                <!-- District Selector (Now depends on State) -->
+                <label for="district-select" class="block text-sm font-medium text-gray-700">ज़िला चुनें (Select District):</label>
+                <select id="district-select" class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md border-2">
+                    <!-- Options populated by JS/Mock Data -->
+                </select>
+
+                <!-- Month Selector -->
+                <label for="month-select" class="block text-sm font-medium text-gray-700">महीना चुनें (Select Month):</label>
+                <select id="month-select" class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md border-2">
+                    <!-- Options populated by JS/Mock Data -->
+                </select>
+            </div>
+        </div>
+
+        <!-- Dashboard Loading State -->
+        <div id="loading-spinner" class="text-center p-12 hidden">
+            <svg class="animate-spin h-8 w-8 text-indigo-500 mx-auto mb-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <p class="text-gray-500">डेटा लोड हो रहा है... (Loading data...)</p>
+        </div>
+        
+        <!-- Main Performance Dashboard -->
+        <div id="dashboard" class="hidden">
+            <h2 class="text-2xl font-bold text-gray-800 mb-4">
+                <span id="district-name-display">District Name</span> रिपोर्ट (<span id="month-display">Month Year</span>)
+            </h2>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+                <!-- Metric Card 1: Work Days Provided -->
+                <div class="metric-card bg-indigo-500 text-white p-5 rounded-xl flex flex-col justify-between">
+                    <div class="flex items-center space-x-3">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 6V3M6.34 7.34l-2.68-2.68M3 12h3M7.34 17.66l-2.68 2.68M12 18v3M17.66 16.66l2.68 2.68M21 12h-3M16.66 7.34l2.68-2.68M12 12m-9 0a9 9 0 1 0 18 0a9 9 0 1 0 -18 0"/></svg>
+                        <p class="text-sm font-semibold opacity-80">कितने काम के दिन मिले?</p>
+                    </div>
+                    <div class="text-4xl font-extrabold mt-3" id="metric-work-days">0</div>
+                    <p class="text-xs mt-1 opacity-90">कुल मानव दिवस (In Lakhs)</p>
+                </div>
+
+                <!-- Metric Card 2: Families Helped -->
+                <div class="metric-card bg-yellow-500 text-white p-5 rounded-xl flex flex-col justify-between">
+                    <div class="flex items-center space-x-3">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                        <p class="text-sm font-semibold opacity-80">कितने परिवारों को लाभ मिला?</p>
+                    </div>
+                    <div class="text-4xl font-extrabold mt-3" id="metric-households">0</div>
+                    <p class="text-xs mt-1 opacity-90">कुल परिवार (In Thousands)</p>
+                </div>
+
+                <!-- Metric Card 3: Pay/Wage Status -->
+                <div id="metric-pay-status-card" class="metric-card p-5 rounded-xl flex flex-col justify-between text-white bg-gray-500">
+                    <div class="flex items-center space-x-3">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+                        <p class="text-sm font-semibold opacity-80">रोज़ाना की मज़दूरी क्या है?</p>
+                    </div>
+                    <div class="text-4xl font-extrabold mt-3" id="metric-avg-wage">₹0</div>
+                    <p class="text-xs mt-1 opacity-90" id="pay-status-text">राज्य के औसत की तुलना में...</p>
+                </div>
+
+                <!-- Metric Card 4: Funds Disbursed (Budget Utilization) -->
+                <div class="metric-card bg-green-500 text-white p-5 rounded-xl flex flex-col justify-between">
+                    <div class="flex items-center space-x-3">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11V6a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-5"/><path d="M16 4v4"/><path d="M8 4v4"/><path d="M3 10h18"/><path d="M19 14v6"/></svg>
+                        <p class="text-sm font-semibold opacity-80">कितना पैसा ख़र्च हुआ?</p>
+                    </div>
+                    <div class="text-4xl font-extrabold mt-3" id="metric-funds-spent">₹0 Cr</div>
+                    <p class="text-xs mt-1 opacity-90">कुल मज़दूरी व्यय (Total Wages)</p>
+                </div>
+            </div>
+
+            <!-- Comparison Bar Chart (Visualizing key metric vs State Avg) -->
+            <div class="bg-white p-6 rounded-xl shadow-md mb-6">
+                <h3 class="text-xl font-bold text-gray-700 mb-4 border-b pb-2">
+                    तुलना: मेरा ज़िला Vs. राज्य औसत (Comparison: My District Vs. State Average)
+                </h3>
+                
+                <div class="space-y-6">
+                    <!-- Comparison 1: Work Days Provided -->
+                    <div>
+                        <p class="text-base font-semibold text-gray-800 mb-2">कुल काम के दिन (Person-Days)</p>
+                        <div class="flex justify-between text-sm text-gray-600 mb-1">
+                            <span>मेरा ज़िला: <span id="comp-district-days">0</span></span>
+                            <span>राज्य औसत: <span id="comp-state-days">0</span></span>
+                        </div>
+                        <div class="chart-bar-container">
+                            <div id="chart-days-district" class="h-full bg-indigo-500 rounded-lg" style="width:0%"></div>
+                        </div>
+                        <div class="chart-bar-container mt-1">
+                            <div id="chart-days-state" class="h-full bg-gray-400 rounded-lg" style="width:0%"></div>
+                        </div>
+                    </div>
+
+                    <!-- Comparison 2: Average Daily Wage -->
+                    <div>
+                        <p class="text-base font-semibold text-gray-800 mb-2">औसत दैनिक मज़दूरी (Avg. Daily Wage)</p>
+                        <div class="flex justify-between text-sm text-gray-600 mb-1">
+                            <span>मेरा ज़िला: <span id="comp-district-wage">₹0</span></span>
+                            <span>राज्य औसत: <span id="comp-state-wage">₹0</span></span>
+                        </div>
+                        <div class="chart-bar-container">
+                            <div id="chart-wage-district" class="h-full bg-yellow-500 rounded-lg" style="width:0%"></div>
+                        </div>
+                        <div class="chart-bar-container mt-1">
+                            <div id="chart-wage-state" class="h-full bg-gray-400 rounded-lg" style="width:0%"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Historical Data (Simple Table) -->
+            <div class="bg-white p-6 rounded-xl shadow-md">
+                <h3 class="text-xl font-bold text-gray-700 mb-4 border-b pb-2">
+                    पिछला प्रदर्शन (Past Performance)
+                </h3>
+                <div class="overflow-x-auto">
+                    <table class="min-w-full divide-y divide-gray-200">
+                        <thead class="bg-gray-50">
+                            <tr>
+                                <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">महीना (Month)</th>
+                                <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">काम के दिन (Lakh)</th>
+                                <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">औसत मज़दूरी (₹)</th>
+                                <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">परिवार (Thousand)</th>
+                            </tr>
+                        </thead>
+                        <tbody id="historical-data-body" class="bg-white divide-y divide-gray-200">
+                            <!-- Rows populated by JS -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <footer class="mt-8 text-center text-sm text-gray-500">
+            <p>डेटा स्रोत: data.gov.in (Source: Cached/ETL Service)</p>
+            <p>प्रस्तुत: <span id="user-id-display"></span></p>
+        </footer>
+    </div>
+
+<script>
+    // --- STATE AND DISTRICT MASTER DATA ---
+    const STATE_MASTER = [
+        { id: 'up', name: 'उत्तर प्रदेश (Uttar Pradesh)' },
+        { id: 'ap', name: 'आंध्र प्रदेश (Andhra Pradesh)' },
+        { id: 'ts', name: 'तेलंगाना (Telangana)' },
+        { id: 'mh', name: 'महाराष्ट्र (Maharashtra)' },
+        { id: 'kl', name: 'केरल (Kerala)' },
+    ];
+
+    const DISTRICT_MASTER = [
+        // Uttar Pradesh (UP) - Target Wage: 250
+        { id: 'lucknow', name: 'लखनऊ Lucknow (Lucknow)', state: 'up', target_wage: 250 },
+        { id: 'agra', name: 'आगरा Agra (Agra)', state: 'up', target_wage: 250 },
+        { id: 'gorakhpur', name: 'गोरखपुर Gorakhpur (Gorakhpur)', state: 'up', target_wage: 250 },
+        { id: 'prayagraj', name: 'प्रयागराज Prayagraj (Prayagraj)', state: 'up', target_wage: 250 },
+
+        // Andhra Pradesh (AP) - Target Wage: 270
+        { id: 'visakhapatnam', name: 'विशाखापत्तनम Visakhapatnam (Visakhapatnam)', state: 'ap', target_wage: 270 },
+        { id: 'guntur', name: 'गुंटूर Guntur (Guntur)', state: 'ap', target_wage: 270 },
+
+        // Telangana (TS) - Target Wage: 280
+        { id: 'hyderabad', name: 'हैदराबाद Hyderabad (Hyderabad)', state: 'ts', target_wage: 280 },
+        { id: 'warangal', name: 'वारंगल Warangal (Warangal)', state: 'ts', target_wage: 280 },
+
+        // Maharashtra (MH) - Target Wage: 290
+        { id: 'pune', name: 'पुणे Pune (Pune)', state: 'mh', target_wage: 290 },
+        { id: 'nagpur', name: 'नागपुर Nagpur (Nagpur)', state: 'mh', target_wage: 290 },
+
+        // Kerala (KL) - Target Wage: 300
+        { id: 'thiruvananthapuram', name: 'तिरुवनंतपुरम Thiruvananthapuram (Thiruvananthapuram)', state: 'kl', target_wage: 300 },
+        { id: 'kochi', name: 'कोच्चि Kochi (Kochi)', state: 'kl', target_wage: 300 },
+    ];
+
+
+    // --- MOCK DATA FOR DEMONSTRATION (Expanded) ---
+    const MOCK_DATA = {
+        // UP (Existing Data)
+        'lucknow': [
+            { month_year: 'Sep 2024', persondays_generated: 4.5, wages_disbursed_crore: 9.8, avg_wage_per_day: 260, households_provided_work: 32, state_avg_wage: 245, state_avg_days: 3.5 },
+            { month_year: 'Aug 2024', persondays_generated: 3.8, wages_disbursed_crore: 8.5, avg_wage_per_day: 255, households_provided_work: 30, state_avg_wage: 240, state_avg_days: 3.2 },
+            { month_year: 'Jul 2024', persondays_generated: 5.1, wages_disbursed_crore: 11.0, avg_wage_per_day: 258, households_provided_work: 35, state_avg_wage: 242, state_avg_days: 3.9 },
+        ],
+        'agra': [
+            { month_year: 'Sep 2024', persondays_generated: 2.1, wages_disbursed_crore: 4.0, avg_wage_per_day: 210, households_provided_work: 15, state_avg_wage: 245, state_avg_days: 3.5 },
+            { month_year: 'Aug 2024', persondays_generated: 2.5, wages_disbursed_crore: 5.2, avg_wage_per_day: 215, households_provided_work: 18, state_avg_wage: 240, state_avg_days: 3.2 },
+            { month_year: 'Jul 2024', persondays_generated: 2.9, wages_disbursed_crore: 6.0, avg_wage_per_day: 220, households_provided_work: 20, state_avg_wage: 242, state_avg_days: 3.9 },
+        ],
+        'gorakhpur': [
+            { month_year: 'Sep 2024', persondays_generated: 5.5, wages_disbursed_crore: 12.0, avg_wage_per_day: 240, households_provided_work: 40, state_avg_wage: 245, state_avg_days: 3.5 },
+            { month_year: 'Aug 2024', persondays_generated: 4.9, wages_disbursed_crore: 10.5, avg_wage_per_day: 235, households_provided_work: 38, state_avg_wage: 240, state_avg_days: 3.2 },
+            { month_year: 'Jul 2024', persondays_generated: 5.3, wages_disbursed_crore: 11.2, avg_wage_per_day: 242, households_provided_work: 42, state_avg_wage: 242, state_avg_days: 3.9 },
+        ],
+        'prayagraj': [
+            { month_year: 'Sep 2024', persondays_generated: 3.0, wages_disbursed_crore: 6.5, avg_wage_per_day: 245, households_provided_work: 25, state_avg_wage: 245, state_avg_days: 3.5 },
+            { month_year: 'Aug 2024', persondays_generated: 3.2, wages_disbursed_crore: 7.0, avg_wage_per_day: 248, households_provided_work: 26, state_avg_wage: 240, state_avg_days: 3.2 },
+            { month_year: 'Jul 2024', persondays_generated: 3.5, wages_disbursed_crore: 7.5, avg_wage_per_day: 250, households_provided_work: 28, state_avg_wage: 242, state_avg_days: 3.9 },
+        ],
+        // AP (New Data) - State Avg Wage: 275, Days: 4.0
+        'visakhapatnam': [
+            { month_year: 'Sep 2024', persondays_generated: 5.8, wages_disbursed_crore: 14.5, avg_wage_per_day: 280, households_provided_work: 45, state_avg_wage: 275, state_avg_days: 4.0 },
+            { month_year: 'Aug 2024', persondays_generated: 5.5, wages_disbursed_crore: 13.8, avg_wage_per_day: 278, households_provided_work: 42, state_avg_wage: 270, state_avg_days: 3.8 },
+        ],
+        'guntur': [
+            { month_year: 'Sep 2024', persondays_generated: 3.1, wages_disbursed_crore: 7.5, avg_wage_per_day: 260, households_provided_work: 25, state_avg_wage: 275, state_avg_days: 4.0 },
+        ],
+        // TS (New Data) - State Avg Wage: 285, Days: 4.5
+        'hyderabad': [
+            { month_year: 'Sep 2024', persondays_generated: 6.2, wages_disbursed_crore: 17.0, avg_wage_per_day: 295, households_provided_work: 50, state_avg_wage: 285, state_avg_days: 4.5 },
+        ],
+        // MH (New Data) - State Avg Wage: 295, Days: 3.0
+        'pune': [
+            { month_year: 'Sep 2024', persondays_generated: 3.5, wages_disbursed_crore: 9.0, avg_wage_per_day: 285, households_provided_work: 30, state_avg_wage: 295, state_avg_days: 3.0 },
+        ],
+        // KL (New Data) - State Avg Wage: 310, Days: 2.5
+        'thiruvananthapuram': [
+            { month_year: 'Sep 2024', persondays_generated: 2.8, wages_disbursed_crore: 7.5, avg_wage_per_day: 320, households_provided_work: 20, state_avg_wage: 310, state_avg_days: 2.5 },
+        ],
+    };
+
+    // --- DOM Elements ---
+    const stateSelect = document.getElementById('state-select'); // NEW ELEMENT
+    const districtSelect = document.getElementById('district-select');
+    const monthSelect = document.getElementById('month-select');
+    const dashboard = document.getElementById('dashboard');
+    const loadingSpinner = document.getElementById('loading-spinner');
+    const districtNameDisplay = document.getElementById('district-name-display');
+    const monthDisplay = document.getElementById('month-display');
+    const locationStatus = document.getElementById('location-status');
+    const welcomeScreen = document.getElementById('welcome-screen');
+    const appContainer = document.getElementById('app-container');
+
+    // --- Core Functions ---
+
+    // Function to simplify number formatting for low-literacy audience
+    function formatNumber(num, decimalPlaces = 1) {
+        if (num >= 100) return num.toFixed(0);
+        if (num >= 10) return num.toFixed(1);
+        return num.toFixed(decimalPlaces);
+    }
+
+    function getPayStatus(districtWage, stateAvgWage) {
+        // Find the target wage for the currently selected district
+        const selectedDistrictId = districtSelect.value;
+        const districtInfo = DISTRICT_MASTER.find(d => d.id === selectedDistrictId);
+        const targetWage = districtInfo ? districtInfo.target_wage : 250; 
+        
+        if (districtWage >= targetWage) { 
+            if (districtWage >= stateAvgWage * 1.05) {
+                return { status: 'Excellent', color: 'bg-green-600', text: 'बहुत अच्छा! (Target से ज़्यादा)' };
+            }
+            return { status: 'Good', color: 'bg-green-500', text: 'अच्छा! (State Average से बेहतर)' };
+        } else if (districtWage < stateAvgWage * 0.9) {
+            return { status: 'Poor', color: 'bg-red-500', text: 'कम! (State Average से बहुत कम)' };
+        } else {
+            return { status: 'Average', color: 'bg-yellow-500', text: 'ठीक है (State Average के करीब)' };
+        }
+    }
+
+    // Renders the main dashboard with selected data
+    function renderDashboard(data, districtInfo) {
+        if (!data) {
+            dashboard.classList.add('hidden');
+            return;
+        }
+
+        // 1. Update Header
+        districtNameDisplay.textContent = districtInfo.name.split(' ')[0]; // Show Hindi Name
+        monthDisplay.textContent = data.month_year;
+
+        // 2. Update Main Metric Cards
+        document.getElementById('metric-work-days').textContent = formatNumber(data.persondays_generated);
+        document.getElementById('metric-households').textContent = formatNumber(data.households_provided_work);
+        document.getElementById('metric-funds-spent').textContent = `₹${formatNumber(data.wages_disbursed_crore, 1)}`;
+        document.getElementById('metric-avg-wage').textContent = `₹${formatNumber(data.avg_wage_per_day, 0)}`;
+
+        const payStatus = getPayStatus(data.avg_wage_per_day, data.state_avg_wage);
+        const payCard = document.getElementById('metric-pay-status-card');
+        // Safely replace the color class
+        payCard.className = payCard.className.replace(/bg-(green|red|yellow|gray)-[0-9]{2,3}/, payStatus.color);
+        document.getElementById('pay-status-text').textContent = payStatus.text;
+
+        // 3. Update Comparison Bar Chart
+        const maxDays = Math.max(data.persondays_generated, data.state_avg_days);
+        const maxWage = Math.max(data.avg_wage_per_day, data.state_avg_wage);
+
+        // Days
+        document.getElementById('comp-district-days').textContent = formatNumber(data.persondays_generated);
+        document.getElementById('comp-state-days').textContent = formatNumber(data.state_avg_days);
+        document.getElementById('chart-days-district').style.width = `${(data.persondays_generated / maxDays) * 100}%`;
+        document.getElementById('chart-days-state').style.width = `${(data.state_avg_days / maxDays) * 100}%`;
+
+        // Wage
+        document.getElementById('comp-district-wage').textContent = `₹${formatNumber(data.avg_wage_per_day, 0)}`;
+        document.getElementById('comp-state-wage').textContent = `₹${formatNumber(data.state_avg_wage, 0)}`;
+        document.getElementById('chart-wage-district').style.width = `${(data.avg_wage_per_day / maxWage) * 100}%`;
+        document.getElementById('chart-wage-state').style.width = `${(data.state_avg_wage / maxWage) * 100}%`;
+
+
+        // 4. Update Historical Data
+        const historicalData = MOCK_DATA[districtInfo.id];
+        const historicalBody = document.getElementById('historical-data-body');
+        historicalBody.innerHTML = ''; // Clear previous data
+
+        historicalData.forEach(item => {
+            const row = historicalBody.insertRow();
+            row.className = 'hover:bg-gray-100 transition duration-150';
+            row.innerHTML = `
+                <td class="px-3 py-2 whitespace-nowrap text-sm font-medium text-gray-900">${item.month_year}</td>
+                <td class="px-3 py-2 whitespace-nowrap text-sm text-gray-700">${formatNumber(item.persondays_generated)}</td>
+                <td class="px-3 py-2 whitespace-nowrap text-sm text-gray-700">₹${formatNumber(item.avg_wage_per_day, 0)}</td>
+                <td class="px-3 py-2 whitespace-nowrap text-sm text-gray-700">${formatNumber(item.households_provided_work)}</td>
+            `;
+        });
+
+        // Show dashboard
+        dashboard.classList.remove('hidden');
+    }
+
+    // Handles fetching and display logic
+    function loadPerformanceData() {
+        const selectedId = districtSelect.value;
+        const selectedMonth = monthSelect.value;
+
+        if (!selectedId || !selectedMonth || !MOCK_DATA[selectedId]) {
+             dashboard.classList.add('hidden');
+             loadingSpinner.classList.add('hidden');
+             return;
+        }
+
+        // Show spinner while fetching (Simulate network delay)
+        dashboard.classList.add('hidden');
+        loadingSpinner.classList.remove('hidden');
+
+        setTimeout(() => {
+            loadingSpinner.classList.add('hidden');
+            const districtInfo = DISTRICT_MASTER.find(d => d.id === selectedId);
+            const data = MOCK_DATA[selectedId].find(d => d.month_year === selectedMonth);
+            renderDashboard(data, districtInfo);
+        }, 500); // Simulated API latency
+    }
+    
+    // NEW: Filters the districts based on the selected state
+    function populateDistrictSelector() {
+        const selectedStateId = stateSelect.value;
+        districtSelect.innerHTML = ''; // Clear existing districts
+
+        const filteredDistricts = DISTRICT_MASTER.filter(d => d.state === selectedStateId);
+        
+        if (filteredDistricts.length === 0) {
+            const option = document.createElement('option');
+            option.value = '';
+            option.textContent = 'कोई ज़िला नहीं मिला (No district found)';
+            districtSelect.appendChild(option);
+            loadPerformanceData(); // Hide dashboard
+            return;
+        }
+
+        filteredDistricts.forEach(district => {
+            const option = document.createElement('option');
+            option.value = district.id;
+            option.textContent = district.name.split('(')[0]; // Use Hindi name for cleaner display
+            districtSelect.appendChild(option);
+        });
+        
+        // Select the first district by default
+        districtSelect.value = filteredDistricts[0].id;
+        loadPerformanceData();
+    }
+
+    // --- Bonus: Geo-location Feature (Updated for multi-state) ---
+    function identifyDistrictByLocation() {
+        if (!navigator.geolocation) {
+            locationStatus.textContent = 'लोकेशन उपलब्ध नहीं (Location not available)';
+            return;
+        }
+
+        locationStatus.textContent = 'ज़िला ढूँढ रहा है... (Searching for district...)';
+
+        navigator.geolocation.getCurrentPosition((position) => {
+            // SIMULATION: Suggest state/district based on latitude band (VERY simple)
+            const lat = position.coords.latitude;
+            let suggestedStateId = 'up'; 
+            let suggestedDistrictId = 'lucknow'; 
+
+            if (lat > 16 && lat < 18) { // Andhra/Telangana band
+                suggestedStateId = 'ap';
+                suggestedDistrictId = 'visakhapatnam';
+            } else if (lat > 8 && lat < 12) { // Kerala band
+                suggestedStateId = 'kl';
+                suggestedDistrictId = 'thiruvananthapuram';
+            } else if (lat > 18 && lat < 22) { // Maharashtra band
+                 suggestedStateId = 'mh';
+                 suggestedDistrictId = 'pune';
+            }
+            // Default is UP (lat > 26 & lat < 28)
+
+            stateSelect.value = suggestedStateId;
+            populateDistrictSelector(); // Repopulate districts for the suggested state
+            districtSelect.value = suggestedDistrictId;
+            
+            const suggestedDistrictName = DISTRICT_MASTER.find(d => d.id === suggestedDistrictId).name.split('(')[0];
+
+            locationStatus.innerHTML = `
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-1 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.25A9 9 9 0 0112 21.033A9 9 0 013.382 4.75a4.25 4.25 0 017.5-1.5 4.25 4.25 0 017.5 1.5z" />
+                </svg>
+                लोकेशन मिला: ${suggestedDistrictName} ऑटो-सिलेक्ट किया गया।
+            `;
+            loadPerformanceData(); 
+        }, (error) => {
+            console.warn(`Geolocation Error: ${error.code}: ${error.message}`);
+            locationStatus.textContent = 'लोकेशन एक्सेस अस्वीकार कर दिया गया। (Location access denied.)';
+            loadPerformanceData();
+        }, {
+            enableHighAccuracy: false,
+            timeout: 5000,
+            maximumAge: 0
+        });
+    }
+
+    // --- Transition Function (Handles Splash Screen) ---
+    function startAppFlow() {
+        const WELCOME_DURATION_MS = 3000; // 3 second minimum display
+        
+        setTimeout(() => {
+            // 1. Start the fade-out transition
+            welcomeScreen.classList.remove('opacity-100');
+            welcomeScreen.classList.add('opacity-0');
+            
+            // 2. Wait for the CSS transition to finish (0.5s)
+            setTimeout(() => {
+                welcomeScreen.remove(); // Remove element from DOM
+                appContainer.classList.remove('hidden'); // Show main content
+                
+                // 3. Initialize the rest of the app functionality
+                initApp();
+            }, 500); 
+            
+        }, WELCOME_DURATION_MS);
+    }
+
+    // --- Initialization & Event Listeners ---
+    function initApp() {
+        // 1. Populate State Selector
+        STATE_MASTER.forEach(state => {
+            const option = document.createElement('option');
+            option.value = state.id;
+            option.textContent = state.name;
+            stateSelect.appendChild(option);
+        });
+        
+        // 2. Populate Month Selector (using UP's data as the universal reference for months)
+        const availableMonths = MOCK_DATA.lucknow.map(d => d.month_year);
+        // Add single-month options from new states if not already present
+        Object.values(MOCK_DATA).forEach(dataArray => {
+             dataArray.forEach(item => {
+                if (!availableMonths.includes(item.month_year)) {
+                    availableMonths.push(item.month_year);
+                }
+             });
+        });
+        
+        // Sort months if necessary, but keep the current default structure
+        availableMonths.forEach(month => {
+            const option = document.createElement('option');
+            option.value = month;
+            option.textContent = month;
+            monthSelect.appendChild(option);
+        });
+
+        // Select the latest month by default
+        if (availableMonths.length > 0) {
+            monthSelect.value = availableMonths[0];
+        }
+
+        // 3. Set Event Listeners
+        stateSelect.addEventListener('change', populateDistrictSelector);
+        districtSelect.addEventListener('change', loadPerformanceData);
+        monthSelect.addEventListener('change', loadPerformanceData);
+
+        // 4. Set User ID Display (MANDATORY REQUIREMENT)
+        // Access window.auth, which may be undefined if Firebase config was missing.
+        const auth = window.auth; 
+        const userId = auth?.currentUser?.uid || 'N/A (No Firebase)';
+        document.getElementById('user-id-display').textContent = `User ID: ${userId}`;
+
+
+        // 5. Initial Load & Geo-location attempt
+        // Default to the first state (UP) and populate districts before attempting geolocation
+        stateSelect.value = STATE_MASTER[0].id; 
+        populateDistrictSelector();
+        
+        identifyDistrictByLocation(); // Attempt geo-location (Bonus)
+    }
+
+    // startAppFlow is called from the Firebase module after auth is ready or on failure.
+    
+</script>
+
+</body>
+</html>
